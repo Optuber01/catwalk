@@ -18,7 +18,7 @@ public class CatWalkLoader implements PluginLoader {
         MavenLibraryResolver resolver = new MavenLibraryResolver();
 
         resolver.addRepository(new RemoteRepository.Builder(
-                "central", "default", "https://repo1.maven.org/maven2/"
+                "central", "default", MavenLibraryResolver.MAVEN_CENTRAL_DEFAULT_MIRROR
         ).build());
 
         List<Dependency> dependencies = List.of(

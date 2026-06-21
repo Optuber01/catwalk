@@ -7,6 +7,7 @@ import dev.ua.ikeepcalm.catwalk.common.database.DatabaseManager;
 import dev.ua.ikeepcalm.catwalk.common.database.model.RequestProcessor;
 import dev.ua.ikeepcalm.catwalk.common.utils.CatWalkLogger;
 import dev.ua.ikeepcalm.catwalk.common.utils.LagDetector;
+import dev.ua.ikeepcalm.catwalk.common.utils.RequestLogger;
 import dev.ua.ikeepcalm.catwalk.hub.network.NetworkGateway;
 import dev.ua.ikeepcalm.catwalk.hub.network.NetworkRegistry;
 import dev.ua.ikeepcalm.catwalk.hub.webserver.WebServer;
@@ -54,6 +55,8 @@ public class CatWalkMain extends JavaPlugin {
     @Getter
     private RequestProcessor requestProcessor;
 
+    private CatWalkWebserverServiceImpl webserverServiceImpl;
+
     public CatWalkMain() {
         super();
         instance = this;
@@ -76,6 +79,8 @@ public class CatWalkMain extends JavaPlugin {
             FileConfiguration bukkitConfig = getConfig();
             maxConsoleBufferSize = bukkitConfig.getInt("websocketConsoleBuffer");
 
+            RequestLogger.initialize(getDataFolder(), bukkitConfig.getBoolean("request-logging.enabled", true));
+
             new CatWalkCommand(this);
 
             // Load configuration
@@ -92,8 +97,8 @@ public class CatWalkMain extends JavaPlugin {
             }
 
             // IMPORTANT: Register webserver service FIRST
-            CatWalkWebserverService webserverService = new CatWalkWebserverServiceImpl(this);
-            server.getServicesManager().register(CatWalkWebserverService.class, webserverService, this, ServicePriority.Normal);
+            webserverServiceImpl = new CatWalkWebserverServiceImpl(this);
+            server.getServicesManager().register(CatWalkWebserverService.class, webserverServiceImpl, this, ServicePriority.Normal);
 
             setupWebServer(bukkitConfig);
 
@@ -221,6 +226,8 @@ public class CatWalkMain extends JavaPlugin {
         FileConfiguration bukkitConfig = getConfig();
         maxConsoleBufferSize = bukkitConfig.getInt("websocketConsoleBuffer");
 
+        RequestLogger.initialize(getDataFolder(), bukkitConfig.getBoolean("request-logging.enabled", true));
+
         // Reload hub configuration
         loadHubConfiguration(bukkitConfig);
 
@@ -248,6 +255,12 @@ public class CatWalkMain extends JavaPlugin {
         // Re-register APIs
         registerCoreApiRoutes();
 
+        // Reload tore down and rebuilt the WebServer, so addon endpoints registered via
+        // CatWalkWebserverService need to be re-applied to the new instance.
+        if (webserverServiceImpl != null) {
+            webserverServiceImpl.replayRegistrations();
+        }
+
         CatWalkLogger.success("CatWalk reloaded successfully!");
     }
 
@@ -274,6 +287,8 @@ public class CatWalkMain extends JavaPlugin {
         if (app != null) {
             app.stop();
         }
+
+        RequestLogger.shutdown();
     }
 
     public WebServer getWebServer() {

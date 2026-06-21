@@ -1,7 +1,7 @@
 # CatWalk
 
-[![Java](https://img.shields.io/badge/Java-21-orange.svg)](https://www.oracle.com/java/)
-[![Paper](https://img.shields.io/badge/Paper-1.21.4-blue.svg)](https://papermc.io/)
+[![Java](https://img.shields.io/badge/Java-25-orange.svg)](https://www.oracle.com/java/)
+[![Paper](https://img.shields.io/badge/Paper-1.21+-blue.svg)](https://papermc.io/)
 [![Gradle](https://img.shields.io/badge/Gradle-8.x-green.svg)](https://gradle.org/)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -30,8 +30,8 @@
 ## 🚀 Quick Start
 
 ### Prerequisites
-- Java 21 or higher
-- PaperMC 1.21.4+ server
+- Java 25 or higher
+- PaperMC 1.21+ server
 - MariaDB/MySQL database
 - Gradle 8.x (for building)
 

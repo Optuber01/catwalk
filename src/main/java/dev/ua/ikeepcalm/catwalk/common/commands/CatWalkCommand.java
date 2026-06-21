@@ -5,6 +5,8 @@ import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.tree.LiteralCommandNode;
 import dev.ua.ikeepcalm.catwalk.CatWalkMain;
+import dev.ua.ikeepcalm.catwalk.hub.webserver.CustomOpenApiGenerator;
+import dev.ua.ikeepcalm.catwalk.hub.webserver.WebServer;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
 import io.papermc.paper.command.brigadier.Commands;
 import io.papermc.paper.plugin.lifecycle.event.LifecycleEventManager;
@@ -13,6 +15,10 @@ import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.format.TextDecoration;
 import org.bukkit.command.CommandSender;
+
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
 
 public class CatWalkCommand {
 
@@ -43,6 +49,10 @@ public class CatWalkCommand {
                     .then(
                             Commands.literal("status")
                                     .executes(this::executeStatus)
+                    )
+                    .then(
+                            Commands.literal("endpoints")
+                                    .executes(this::executeEndpoints)
                     )
                     .then(
                             Commands.literal("network")
@@ -82,6 +92,10 @@ public class CatWalkCommand {
                 .append(Component.text("• ", NamedTextColor.DARK_GRAY))
                 .append(Component.text("/catwalk status", NamedTextColor.AQUA))
                 .append(Component.text(" - Show server status", NamedTextColor.GRAY))
+                .appendNewline()
+                .append(Component.text("• ", NamedTextColor.DARK_GRAY))
+                .append(Component.text("/catwalk endpoints", NamedTextColor.AQUA))
+                .append(Component.text(" - List all registered API endpoints", NamedTextColor.GRAY))
                 .appendNewline()
                 .append(Component.text("• ", NamedTextColor.DARK_GRAY))
                 .append(Component.text("/catwalk network status", NamedTextColor.AQUA))
@@ -186,6 +200,57 @@ public class CatWalkCommand {
                 .append(Component.text(plugin.isHubMode() ? "Hub Gateway" : "Backend Server", NamedTextColor.AQUA))
                 .build()
         );
+
+        return Command.SINGLE_SUCCESS;
+    }
+
+    // Endpoints command - lists every registered route, including ones added by addons
+    private int executeEndpoints(CommandContext<CommandSourceStack> context) {
+        CommandSender sender = context.getSource().getSender();
+
+        WebServer webServer = plugin.getWebServer();
+        if (webServer == null) {
+            sender.sendMessage(Component.text()
+                    .append(Component.text("[", NamedTextColor.DARK_GRAY))
+                    .append(Component.text("CatWalk", NamedTextColor.BLUE))
+                    .append(Component.text("] ", NamedTextColor.DARK_GRAY))
+                    .append(Component.text("Web server is not running", NamedTextColor.RED))
+                    .build()
+            );
+            return Command.SINGLE_SUCCESS;
+        }
+
+        List<CustomOpenApiGenerator.RouteInfo> routes = new ArrayList<>(webServer.getOpenApiGenerator().getRegisteredRoutes());
+        routes.sort(Comparator.comparing(CustomOpenApiGenerator.RouteInfo::getPath)
+                .thenComparing(route -> route.getMethod().toString()));
+
+        sender.sendMessage(Component.text()
+                .append(Component.text("Registered CatWalk Endpoints ", NamedTextColor.BLUE, TextDecoration.BOLD))
+                .append(Component.text("(" + routes.size() + ")", NamedTextColor.GRAY))
+                .build()
+        );
+
+        for (CustomOpenApiGenerator.RouteInfo route : routes) {
+            // A route requires auth if the global key gate applies to its path, OR the
+            // addon that registered it (via @BridgeEventHandler) declared its own requirement -
+            // whichever check is stricter is the one that actually runs at request time.
+            boolean authRequired = webServer.requiresAuthentication(route.getPath())
+                    || Boolean.TRUE.equals(route.getRequiresAuth());
+
+            String origin = route.getPluginName() != null ? route.getPluginName() : switch (route.getRouteType()) {
+                case PROXY -> "proxy";
+                case ANNOTATED, STATIC -> "core";
+            };
+
+            sender.sendMessage(Component.text()
+                    .append(Component.text(String.format("%-6s ", route.getMethod()), NamedTextColor.AQUA))
+                    .append(Component.text(route.getPath(), NamedTextColor.WHITE))
+                    .append(Component.text("  [" + origin + "]", NamedTextColor.GRAY))
+                    .append(Component.text(authRequired ? "  (auth required)" : "  (public)",
+                            authRequired ? NamedTextColor.YELLOW : NamedTextColor.GREEN))
+                    .build()
+            );
+        }
 
         return Command.SINGLE_SUCCESS;
     }

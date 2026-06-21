@@ -121,6 +121,16 @@ corsOrigins:
   # - "http://localhost:3000"
 
 # =================================================================
+# REQUEST LOGGING
+# =================================================================
+
+request-logging:
+  # Log every HTTP request (who, which endpoint, which authorization, status, duration)
+  # to plugins/CatWalk/logs/requests.log, separate from the server console log.
+  # Rotates at 10MB, keeps 5 files.
+  enabled: true
+
+# =================================================================
 # WEBSOCKET SETTINGS
 # =================================================================
 

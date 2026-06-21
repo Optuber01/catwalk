@@ -981,6 +981,28 @@ public class CustomOpenApiGenerator {
         return registeredRoutes.size();
     }
 
+    /**
+     * Snapshot of every currently registered route, including ones contributed by
+     * addons (ANNOTATED) and hub proxy routes (PROXY), not just CatWalk's own (STATIC).
+     */
+    public List<RouteInfo> getRegisteredRoutes() {
+        return List.copyOf(registeredRoutes.values());
+    }
+
+    /**
+     * Attributes an already-registered route to the addon that owns it and records its
+     * declared per-route auth requirement. BridgeEventHandlerProcessor registers routes
+     * through WebServer.get/post/put/delete (same path as CatWalk's own static routes),
+     * so without this the route would be indistinguishable from a core route.
+     */
+    public void tagRoute(HandlerType method, String path, String pluginName, boolean requiresAuth) {
+        RouteInfo routeInfo = registeredRoutes.get(method + ":" + path);
+        if (routeInfo != null) {
+            routeInfo.setPluginName(pluginName);
+            routeInfo.setRequiresAuth(requiresAuth);
+        }
+    }
+
     // Enums and inner classes
     public enum RouteType {
         STATIC,      // Manually registered routes
@@ -1006,6 +1028,9 @@ public class CustomOpenApiGenerator {
         private String pluginName;
         private Object handlerInstance;
         private Method handlerMethod;
+
+        // Null means "no per-route override, defer to the global auth setting".
+        private Boolean requiresAuth;
 
         // Proxy route fields
         private String proxySummary;

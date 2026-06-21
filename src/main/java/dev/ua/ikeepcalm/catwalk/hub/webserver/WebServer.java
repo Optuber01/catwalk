@@ -2,10 +2,12 @@ package dev.ua.ikeepcalm.catwalk.hub.webserver;
 
 import dev.ua.ikeepcalm.catwalk.CatWalkMain;
 import dev.ua.ikeepcalm.catwalk.common.database.model.EndpointDefinition;
+import dev.ua.ikeepcalm.catwalk.common.utils.RequestLogger;
 import dev.ua.ikeepcalm.catwalk.common.utils.json.GsonJsonMapper;
 import io.javalin.Javalin;
 import io.javalin.community.ssl.SslPlugin;
 import io.javalin.config.JavalinConfig;
+import io.javalin.http.Context;
 import io.javalin.http.Handler;
 import io.javalin.http.HandlerType;
 import io.javalin.http.UnauthorizedResponse;
@@ -16,6 +18,7 @@ import org.bukkit.configuration.file.FileConfiguration;
 import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.time.Instant;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
@@ -28,6 +31,9 @@ public class WebServer {
     public static final String X_CATWALK_BEARER = "Bearer ";
     private static final String[] noAuthPaths = new String[]{"/", "/swagger", "/openapi", "/redoc", "/plugins", "/health"};
 
+    private static final String ATTR_START_TIME = "catwalk-request-start";
+    private static final String ATTR_AUTH_INFO = "catwalk-auth-info";
+
     private final Logger log;
     @Getter
     private final Javalin javalin;
@@ -38,6 +44,8 @@ public class WebServer {
     private final List<String> whitelistedPaths;
 
     private final boolean isAuthEnabled;
+
+    private final boolean requestLoggingEnabled;
 
     @Getter
     private final boolean disableSwagger;
@@ -64,6 +72,7 @@ public class WebServer {
         this.blockedPaths = bukkitConfig.getStringList("blocked-paths");
         this.whitelistedPaths = bukkitConfig.getStringList("whitelisted-paths");
         this.isAuthEnabled = bukkitConfig.getBoolean("useKeyAuth", true);
+        this.requestLoggingEnabled = bukkitConfig.getBoolean("request-logging.enabled", true);
         this.disableSwagger = bukkitConfig.getBoolean("disable-swagger", false);
         this.tlsEnabled = bukkitConfig.getBoolean("tls.enabled", false);
         this.sni = bukkitConfig.getBoolean("tls.sni", false);
@@ -76,6 +85,7 @@ public class WebServer {
         this.openApiGenerator = new CustomOpenApiGenerator(main);
         this.javalin = Javalin.create(this::configureJavalin);
 
+        setupRequestLogging();
         setupAuthentication();
         setupOpenApiEndpoints();
 
@@ -107,10 +117,12 @@ public class WebServer {
         this.javalin.beforeMatched(ctx -> {
 
             if (!isAuthEnabled) {
+                ctx.attribute(ATTR_AUTH_INFO, "disabled");
                 return;
             }
 
             if (isNoAuthPath(ctx.req().getPathInfo())) {
+                ctx.attribute(ATTR_AUTH_INFO, "not-required");
                 return;
             }
 
@@ -119,25 +131,83 @@ public class WebServer {
             if (authHeader != null && authHeader.startsWith(X_CATWALK_BEARER)) {
                 String token = authHeader.substring(7);
                 if (Objects.equals(token, authKey)) {
+                    ctx.attribute(ATTR_AUTH_INFO, "bearer:" + redact(token));
                     if (isDebug) {
                         log.info("Auth successful via Bearer token for: " + ctx.req().getPathInfo());
                     }
                     return;
                 } else {
                     log.warning("Invalid Bearer token provided: " + token.substring(0, Math.min(token.length(), 5)) + "...");
+                    ctx.attribute(ATTR_AUTH_INFO, "bearer-invalid:" + redact(token));
                 }
             }
 
             String authCookie = ctx.cookie(X_CATWALK_COOKIE);
             if (authCookie != null && Objects.equals(authCookie, authKey)) {
+                ctx.attribute(ATTR_AUTH_INFO, "cookie:" + redact(authCookie));
                 if (isDebug) {
                     log.info("Auth successful via cookie for: " + ctx.req().getPathInfo());
                 }
                 return;
             }
 
+            ctx.attribute(ATTR_AUTH_INFO, authHeader == null && authCookie == null ? "missing" : "invalid");
             throw new UnauthorizedResponse("Authentication required. Use Bearer token authentication.");
         });
+    }
+
+    /**
+     * Whether a request to the given path is required to present valid authentication.
+     * Used by the /catwalk endpoints command to report each route's auth requirement.
+     */
+    public boolean requiresAuthentication(String path) {
+        return isAuthEnabled && !isNoAuthPath(path);
+    }
+
+    private static String redact(String secret) {
+        if (secret == null || secret.isEmpty()) {
+            return "none";
+        }
+        return secret.substring(0, Math.min(4, secret.length())) + "...";
+    }
+
+    private void setupRequestLogging() {
+        if (!requestLoggingEnabled) {
+            return;
+        }
+
+        this.javalin.before(ctx -> ctx.attribute(ATTR_START_TIME, System.currentTimeMillis()));
+        this.javalin.after(this::logRequest);
+    }
+
+    private void logRequest(Context ctx) {
+        Long startTime = ctx.attribute(ATTR_START_TIME);
+        long durationMs = startTime != null ? System.currentTimeMillis() - startTime : -1;
+
+        String authInfo = ctx.attribute(ATTR_AUTH_INFO);
+        if (authInfo == null) {
+            authInfo = "n/a";
+        }
+
+        String line = String.format(
+                "%s ip=%s method=%-6s path=%s status=%d auth=%s duration_ms=%d user_agent=\"%s\"",
+                Instant.now(), clientIp(ctx), ctx.method(), ctx.path(), ctx.statusCode(),
+                authInfo, durationMs, sanitize(ctx.userAgent())
+        );
+
+        RequestLogger.log(line);
+    }
+
+    private String clientIp(Context ctx) {
+        String forwarded = ctx.header("X-Forwarded-For");
+        if (forwarded != null && !forwarded.isBlank()) {
+            return forwarded.split(",")[0].trim();
+        }
+        return ctx.ip();
+    }
+
+    private String sanitize(String value) {
+        return value == null ? "-" : value.replace("\"", "'");
     }
 
     private void setupOpenApiEndpoints() {
@@ -419,6 +489,15 @@ public class WebServer {
     }
 
     /**
+     * Attributes an already-registered route to the addon that owns it, and records its
+     * declared per-route auth requirement, so /catwalk endpoints reports it accurately
+     * instead of as an anonymous core route.
+     */
+    public void tagRoute(io.javalin.openapi.HttpMethod method, String path, String pluginName, boolean requiresAuth) {
+        openApiGenerator.tagRoute(convertHttpMethodToHandlerType(method), path, pluginName, requiresAuth);
+    }
+
+    /**
      * Register a proxy route with OpenAPI documentation
      */
     public void registerProxyRoute(HandlerType method, String path, Handler handler, String summary, String description, String[] tags, EndpointDefinition detailedEndpoint) {
@@ -431,7 +510,13 @@ public class WebServer {
     }
 
     private boolean isNoAuthPath(String requestPath) {
-        if (Arrays.stream(noAuthPaths).anyMatch(requestPath::startsWith)) {
+        // "/" must be an exact match - matching it as a prefix would match every path,
+        // since every HTTP path starts with "/", bypassing auth entirely.
+        if (requestPath.equals("/")) {
+            return true;
+        }
+
+        if (Arrays.stream(noAuthPaths).filter(p -> !p.equals("/")).anyMatch(requestPath::startsWith)) {
             return true;
         }
 

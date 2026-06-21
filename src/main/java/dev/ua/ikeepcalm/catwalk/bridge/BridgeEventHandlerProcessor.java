@@ -62,7 +62,7 @@ public class BridgeEventHandlerProcessor {
 
             for (HttpMethod httpMethod : methods) {
                 try {
-                    registerEndpoint(webServer, httpMethod, openApiAnnotation.path(), method, handlerInstance, requiresAuth);
+                    registerEndpoint(webServer, httpMethod, openApiAnnotation.path(), method, handlerInstance, requiresAuth, plugin);
                     registeredEndpoints++;
                 } catch (Exception e) {
                     CatWalkLogger.error("Failed to register endpoint %s %s: %s",
@@ -79,7 +79,7 @@ public class BridgeEventHandlerProcessor {
      * Registers an endpoint with the web server based on the HTTP method.
      */
     private void registerEndpoint(WebServer webServer, HttpMethod httpMethod, String path,
-                                  Method method, Object handlerInstance, boolean requiresAuth) {
+                                  Method method, Object handlerInstance, boolean requiresAuth, String pluginName) {
 
         CatWalkLogger.debug("Registering %s %s (auth: %s)", httpMethod, path, requiresAuth);
 
@@ -94,8 +94,13 @@ public class BridgeEventHandlerProcessor {
                     webServer.delete(path, context -> handleRequest(context, method, handlerInstance, requiresAuth));
             case PATCH ->
                     webServer.addRoute(io.javalin.http.HandlerType.PATCH, path, context -> handleRequest(context, method, handlerInstance, requiresAuth));
-            default -> CatWalkLogger.warn("Unsupported HTTP method: %s", httpMethod);
+            default -> {
+                CatWalkLogger.warn("Unsupported HTTP method: %s", httpMethod);
+                return;
+            }
         }
+
+        webServer.tagRoute(httpMethod, path, pluginName, requiresAuth);
     }
 
     /**
