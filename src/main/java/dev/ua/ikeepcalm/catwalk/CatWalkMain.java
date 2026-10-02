@@ -13,6 +13,7 @@ import dev.ua.ikeepcalm.catwalk.hub.network.NetworkRegistry;
 import dev.ua.ikeepcalm.catwalk.hub.webserver.WebServer;
 import dev.ua.ikeepcalm.catwalk.hub.webserver.services.CatWalkWebserverService;
 import dev.ua.ikeepcalm.catwalk.hub.webserver.services.CatWalkWebserverServiceImpl;
+import io.javalin.Javalin;
 import io.papermc.paper.plugin.configuration.PluginMeta;
 import lombok.Getter;
 import org.bukkit.Bukkit;
@@ -32,6 +33,13 @@ public class CatWalkMain extends JavaPlugin {
     @Getter
     private Gson gson;
     private WebServer app;
+
+    /**
+     * Javalin of the last server that started. Kept after a stop or a failed restart so
+     * {@link CatWalkWebserverService#getWebserver()} keeps its never-null contract.
+     */
+    @Getter
+    private Javalin lastJavalin;
 
     @Getter
     private boolean isHubMode = false;
@@ -101,6 +109,8 @@ public class CatWalkMain extends JavaPlugin {
             server.getServicesManager().register(CatWalkWebserverService.class, webserverServiceImpl, this, ServicePriority.Normal);
 
             setupWebServer(bukkitConfig);
+            // Registrations that arrived before the server existed were only queued; apply them now.
+            webserverServiceImpl.replayRegistrations();
 
             // Initialize based on server mode
             if (isStandaloneMode) {
@@ -211,14 +221,31 @@ public class CatWalkMain extends JavaPlugin {
         }
     }
 
+    /**
+     * Publishes the new server as {@link #getWebServer()} only once it is listening. After a
+     * failed start (Javalin stops its own Jetty instance) there is no web server until the next
+     * successful reload; addon registrations made meanwhile are replayed then.
+     */
     private void setupWebServer(FileConfiguration bukkitConfig) {
-        app = new WebServer(this, bukkitConfig, log);
-        app.start(bukkitConfig.getInt("port", 4567));
+        WebServer candidate = new WebServer(this, bukkitConfig, log);
+        try {
+            candidate.start(bukkitConfig.getInt("port", 4567));
+        } catch (RuntimeException e) {
+            app = null;
+            throw e;
+        }
+        app = candidate;
+        lastJavalin = candidate.getJavalin();
+    }
+
+    private void stopWebServer() {
+        app.stop();
+        app = null;
     }
 
     public void reload() {
         if (app != null) {
-            app.stop();
+            stopWebServer();
         }
 
         CatWalkLogger.info("CatWalk reloading...");
@@ -285,7 +312,7 @@ public class CatWalkMain extends JavaPlugin {
         }
 
         if (app != null) {
-            app.stop();
+            stopWebServer();
         }
 
         RequestLogger.shutdown();
