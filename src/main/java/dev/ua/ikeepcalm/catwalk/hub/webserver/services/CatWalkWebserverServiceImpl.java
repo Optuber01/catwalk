@@ -102,12 +102,10 @@ public class CatWalkWebserverServiceImpl implements CatWalkWebserverService {
      * against a new WebServer instance after {@link CatWalkMain#reload()}.
      */
     private void register(Runnable action) {
-        if (webServer() == null) {
-            // No server is listening (a restart failed); the next successful start replays this.
-            replayActions.add(action);
-            return;
+        // With no server (failed restart) the action is only queued for the next replay.
+        if (webServer() != null) {
+            action.run();
         }
-        action.run();
         replayActions.add(action);
     }
 
@@ -117,7 +115,7 @@ public class CatWalkWebserverServiceImpl implements CatWalkWebserverService {
      * since addons typically register once at their own onEnable() and never again.
      */
     public void replayRegistrations() {
-        if (replayActions.isEmpty() || webServer() == null) {
+        if (replayActions.isEmpty()) {
             return;
         }
 

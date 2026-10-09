@@ -34,10 +34,7 @@ public class CatWalkMain extends JavaPlugin {
     private Gson gson;
     private WebServer app;
 
-    /**
-     * Javalin of the last server that started. Kept after a stop or a failed restart so
-     * {@link CatWalkWebserverService#getWebserver()} keeps its never-null contract.
-     */
+    // Kept after a stop or failed restart so getWebserver() never returns null.
     @Getter
     private Javalin lastJavalin;
 
@@ -109,7 +106,6 @@ public class CatWalkMain extends JavaPlugin {
             server.getServicesManager().register(CatWalkWebserverService.class, webserverServiceImpl, this, ServicePriority.Normal);
 
             setupWebServer(bukkitConfig);
-            // Registrations that arrived before the server existed were only queued; apply them now.
             webserverServiceImpl.replayRegistrations();
 
             // Initialize based on server mode
@@ -221,19 +217,10 @@ public class CatWalkMain extends JavaPlugin {
         }
     }
 
-    /**
-     * Publishes the new server as {@link #getWebServer()} only once it is listening. After a
-     * failed start (Javalin stops its own Jetty instance) there is no web server until the next
-     * successful reload; addon registrations made meanwhile are replayed then.
-     */
+    // Publish the server only once it is listening, so a failed start leaves app null.
     private void setupWebServer(FileConfiguration bukkitConfig) {
         WebServer candidate = new WebServer(this, bukkitConfig, log);
-        try {
-            candidate.start(bukkitConfig.getInt("port", 4567));
-        } catch (RuntimeException e) {
-            app = null;
-            throw e;
-        }
+        candidate.start(bukkitConfig.getInt("port", 4567));
         app = candidate;
         lastJavalin = candidate.getJavalin();
     }
